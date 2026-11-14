@@ -1,0 +1,8 @@
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+player/target/
+# Built from player/ by build.sh
+app/src/main/jniLibs/
