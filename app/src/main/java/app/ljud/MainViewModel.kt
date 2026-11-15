@@ -37,7 +37,7 @@ sealed interface Detail {
 class MenuEntry(val label: String, val run: () -> Unit)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
-    private val auth = Auth(app)
+    private val auth = Auth.get(app)
     private val api = Api(auth)
     private val prefs = app.getSharedPreferences("ljud", Context.MODE_PRIVATE)
 
@@ -394,9 +394,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deviceName(d: Device): String =
-        d.id?.let { aliases["id:$it"] } ?: aliases["name:${d.name}"]
-            ?: if (d.id == phoneDeviceId) "This phone" else d.name
+    fun deviceName(d: Device): String = Speakers.name(aliases, d, phoneDeviceId)
 
     fun hasAlias(d: Device) = deviceName(d) != d.name
 
@@ -500,8 +498,5 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun loadAliases(): Map<String, String> {
-        val o = runCatching { JSONObject(prefs.getString("aliases", "{}")!!) }.getOrNull() ?: return emptyMap()
-        return o.keys().asSequence().associateWith { o.optString(it) }
-    }
+    private fun loadAliases(): Map<String, String> = Speakers.aliases(prefs)
 }

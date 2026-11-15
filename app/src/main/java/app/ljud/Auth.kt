@@ -56,6 +56,19 @@ class Auth(
     port: Int = 8989,
     scopes: List<String> = APP_SCOPES,
 ) {
+    companion object {
+        @Volatile
+        private var app: Auth? = null
+
+        /**
+         * The app's (single, process-wide) Spotify login. The UI and the
+         * background service must share one instance: Spotify may issue a new
+         * refresh token on each refresh, which would invalidate a second copy.
+         */
+        fun get(context: Context): Auth =
+            app ?: synchronized(this) { app ?: Auth(context.applicationContext).also { app = it } }
+    }
+
     private val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     private val redirectUri = "http://127.0.0.1:$port/login"
     private val redirectPort = port
