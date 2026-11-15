@@ -31,6 +31,7 @@ sealed interface Detail {
     data class OfAlbum(val album: Album) : Detail
     data class OfArtist(val artist: Artist) : Detail
     data object Queue : Detail
+    data object NowPlaying : Detail
 }
 
 /** One entry in a long-press menu. */
@@ -179,6 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     Detail.Liked -> tracks = io { api.liked() }
                     is Detail.OfPlaylist -> tracks = io { api.playlistTracks(d.playlist.id) }
                     is Detail.OfAlbum -> tracks = io { api.albumTracks(d.album) }
+                    Detail.NowPlaying -> {}
                     Detail.Queue -> {
                         val (current, next) = io { api.queue() }
                         queueCurrent = current
@@ -230,6 +232,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun menuFor(a: Artist): List<MenuEntry> =
         listOf(MenuEntry("Play artist") { playContext(a.uri) }, goToArtist(a))
+
+    /** The playlist the current song plays from (for the Now playing page), if any. */
+    var contextPlaylist by mutableStateOf<Playlist?>(null); private set
+
+    fun resolveContext(uri: String?, type: String?) {
+        if (type != "playlist" || uri == null) {
+            contextPlaylist = null
+            return
+        }
+        if (contextPlaylist?.uri == uri) return
+        playlists.firstOrNull { it.uri == uri }?.let {
+            contextPlaylist = it
+            return
+        }
+        contextPlaylist = null
+        launchSafe { contextPlaylist = io { api.playlist(uri.substringAfterLast(':')) } }
+    }
 
     private fun playContext(uri: String) = play(JSONObject().put("context_uri", uri))
 

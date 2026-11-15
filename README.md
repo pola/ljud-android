@@ -3,7 +3,11 @@
 A small native Android app (Kotlin + Jetpack Compose) for Spotify:
 
 - Browse Liked songs and playlists, search, tap to play
-- Now-playing bar with play/pause, next and previous
+- Album art in lists, on album/playlist/artist pages and in the now-playing bar
+- Now-playing bar with play/pause, next and previous; tap it for the Now playing page
+  (large cover, controls, links to the album, artists, playlist/Liked songs and speaker)
+- While the phone speaker is on: a media notification (also on the lock screen) showing
+  what your account plays on any speaker, with cover and controls
 - Long-press a song, album or artist for a menu: add to queue, go to the album or
   artist(s), play (same entries and order as the TUI)
 - Artist pages (popular songs, albums & singles) and the queue (icon next to the

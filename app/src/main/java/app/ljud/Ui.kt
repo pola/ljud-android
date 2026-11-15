@@ -143,6 +143,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
         detail is Detail.OfAlbum -> detail.album.run { if (year != null) "$name ($year)" else name }
         detail is Detail.OfArtist -> detail.artist.name
         detail is Detail.Queue -> "Queue"
+        detail is Detail.NowPlaying -> "Now playing"
         vm.tab == Tab.Search -> "Search"
         else -> vm.user?.name?.let { "ljud · $it" } ?: "ljud"
     }
@@ -164,7 +165,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
         },
         bottomBar = {
             Column {
-                NowPlaying(vm)
+                if (detail != Detail.NowPlaying) NowPlaying(vm)
                 NavigationBar {
                     NavigationBarItem(
                         selected = vm.tab == Tab.Library && detail == null,
@@ -187,6 +188,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
             when {
                 detail is Detail.OfArtist -> ArtistScreen(vm, detail)
                 detail is Detail.Queue -> QueueScreen(vm)
+                detail is Detail.NowPlaying -> NowPlayingScreen(vm)
                 detail != null -> TrackList(vm, vm.tracks, vm.tracksLoading, detail)
                 vm.tab == Tab.Library -> LibraryScreen(vm)
                 else -> SearchScreen(vm)
@@ -438,6 +440,115 @@ private fun ArtistRow(vm: MainViewModel, a: Artist) {
     }
 }
 
+/** The current song: cover, controls, and links to its album, artists, source and speaker. */
+@Composable
+private fun NowPlayingScreen(vm: MainViewModel) {
+    val p = vm.playback
+    val t = p?.track
+    if (p == null || t == null) {
+        Text("Nothing is playing.", Modifier.padding(16.dp))
+        return
+    }
+    LaunchedEffect(p.contextUri) { vm.resolveContext(p.contextUri, p.contextType) }
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(p.isPlaying) {
+        while (p.isPlaying) {
+            now = SystemClock.elapsedRealtime()
+            delay(500)
+        }
+    }
+    val pos = vm.progressMs(now)
+    val dur = t.durationMs
+
+    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        item {
+            Spacer(Modifier.height(16.dp))
+            Cover(t.albumRef?.images?.pick(640), 300.dp, shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            Spacer(Modifier.height(20.dp))
+            Text(
+                t.name,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            Text(
+                t.artists,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            LinearProgressIndicator(
+                progress = { if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                drawStopIndicator = {},
+            )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) {
+                Text(fmt(pos), style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.weight(1f))
+                Text(fmt(dur), style = MaterialTheme.typography.labelMedium)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = vm::previous) { Icon(LjudIcons.Previous, "Previous", Modifier.size(32.dp)) }
+                Spacer(Modifier.width(16.dp))
+                FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(64.dp)) {
+                    Icon(
+                        if (p.isPlaying) LjudIcons.Pause else LjudIcons.Play,
+                        if (p.isPlaying) "Pause" else "Play",
+                        Modifier.size(36.dp),
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                IconButton(onClick = vm::next) { Icon(LjudIcons.Next, "Next", Modifier.size(32.dp)) }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        t.albumRef?.let { a ->
+            item {
+                LinkRow("Album", if (a.year != null) "${a.name} (${a.year})" else a.name, {
+                    Cover(a.images.pick(64), 40.dp, placeholder = LjudIcons.Album)
+                }) { vm.open(Detail.OfAlbum(a)) }
+            }
+        }
+        items(t.artistRefs) { a ->
+            LinkRow("Artist", a.name, { Icon(LjudIcons.Person, null) }) { vm.open(Detail.OfArtist(a)) }
+        }
+        // Where it plays from (the album link above already covers album contexts).
+        when (p.contextType) {
+            "playlist" -> vm.contextPlaylist?.let { pl ->
+                item {
+                    LinkRow("Playing from playlist", pl.name, {
+                        Cover(pl.images.pick(64), 40.dp, placeholder = LjudIcons.Library)
+                    }) { vm.open(Detail.OfPlaylist(pl)) }
+                }
+            }
+            "collection" -> item {
+                LinkRow("Playing from", "Liked songs", {
+                    Icon(LjudIcons.Heart, null, tint = MaterialTheme.colorScheme.primary)
+                }) { vm.open(Detail.Liked) }
+            }
+            else -> {}
+        }
+        p.device?.let { d ->
+            item {
+                LinkRow("Speaker", vm.deviceName(d), { Icon(LjudIcons.Speaker, null) }) { vm.openDevices() }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun LinkRow(label: String, value: String, leading: @Composable () -> Unit, onClick: () -> Unit) {
+    ListItem(
+        overlineContent = { Text(label) },
+        headlineContent = { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingContent = leading,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    )
+}
+
 /** The queue. Spotify's API can't jump to a queued song, so a tap opens the menu. */
 @Composable
 private fun QueueScreen(vm: MainViewModel) {
@@ -502,7 +613,7 @@ private fun NowPlaying(vm: MainViewModel) {
             ) {
                 Cover(p.track?.albumRef?.images?.pick(64), 44.dp)
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f).clickable { vm.openDevices() }) {
+                Column(Modifier.weight(1f).clickable { vm.open(Detail.NowPlaying) }) {
                     Text(
                         p.track?.name ?: "—",
                         style = MaterialTheme.typography.titleSmall,

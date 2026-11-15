@@ -54,7 +54,15 @@ data class Album(
     val images: List<Image> = emptyList(),
 )
 data class Device(val id: String?, val name: String, val type: String, val isActive: Boolean, val volume: Int?)
-data class Playback(val device: Device?, val isPlaying: Boolean, val progressMs: Long, val track: Track?)
+data class Playback(
+    val device: Device?,
+    val isPlaying: Boolean,
+    val progressMs: Long,
+    val track: Track?,
+    /** What it's playing from, e.g. "spotify:playlist:…" (type: playlist, album, artist, collection). */
+    val contextUri: String? = null,
+    val contextType: String? = null,
+)
 data class SearchResults(
     val tracks: List<Track>,
     val artists: List<Artist>,
@@ -235,6 +243,10 @@ class Api(private val auth: Auth) {
         return items.mapIndexedNotNull { i, it -> parseTrack(itemTrack(it), i) }
     }
 
+    /** A playlist's details (not its tracks). */
+    fun playlist(id: String): Playlist? =
+        parsePlaylist(get("/playlists/$id", listOf("fields" to "id,uri,name,owner(id,display_name),images,tracks(total)")))
+
     fun liked(max: Int = 2000): List<Track> =
         paged("/me/tracks", listOf("limit" to "50"), max).mapIndexedNotNull { i, it -> parseTrack(itemTrack(it), i) }
 
@@ -291,6 +303,8 @@ class Api(private val auth: Auth) {
             isPlaying = o.optBoolean("is_playing"),
             progressMs = o.optLong("progress_ms"),
             track = parseTrack(o.obj("item"), 0),
+            contextUri = o.obj("context")?.str("uri")?.ifEmpty { null },
+            contextType = o.obj("context")?.str("type")?.ifEmpty { null },
         )
     }
 
