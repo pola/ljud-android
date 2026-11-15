@@ -2,7 +2,10 @@ package app.ljud
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -57,6 +62,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -131,6 +138,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
         detail is Detail.Liked -> "Liked songs"
         detail is Detail.OfPlaylist -> detail.playlist.name
         detail is Detail.OfAlbum -> detail.album.name
+        detail is Detail.OfArtist -> detail.artist.name
         vm.tab == Tab.Search -> "Search"
         else -> vm.user?.name?.let { "ljud · $it" } ?: "ljud"
     }
@@ -155,13 +163,13 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
                 NavigationBar {
                     NavigationBarItem(
                         selected = vm.tab == Tab.Library && detail == null,
-                        onClick = { vm.back(); vm.tab = Tab.Library },
+                        onClick = { vm.closeDetails(); vm.tab = Tab.Library },
                         icon = { Icon(LjudIcons.Library, null) },
                         label = { Text("Library") },
                     )
                     NavigationBarItem(
                         selected = vm.tab == Tab.Search && detail == null,
-                        onClick = { vm.back(); vm.tab = Tab.Search },
+                        onClick = { vm.closeDetails(); vm.tab = Tab.Search },
                         icon = { Icon(LjudIcons.Search, null) },
                         label = { Text("Search") },
                     )
@@ -172,6 +180,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
             when {
+                detail is Detail.OfArtist -> ArtistScreen(vm, detail)
                 detail != null -> TrackList(vm, vm.tracks, vm.tracksLoading, detail)
                 vm.tab == Tab.Library -> LibraryScreen(vm)
                 else -> SearchScreen(vm)
@@ -224,20 +233,15 @@ private fun SearchScreen(vm: MainViewModel) {
         when {
             vm.searching -> Loading()
             r == null -> {}
-            r.tracks.isEmpty() && r.albums.isEmpty() && r.playlists.isEmpty() ->
+            r.tracks.isEmpty() && r.artists.isEmpty() && r.albums.isEmpty() && r.playlists.isEmpty() ->
                 Text("No results.", Modifier.padding(16.dp))
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 if (r.tracks.isNotEmpty()) item { Section("Songs") }
                 itemsIndexed(r.tracks) { i, t -> TrackRow(vm, t) { vm.playFrom(r.tracks, i, null) } }
+                if (r.artists.isNotEmpty()) item { Section("Artists") }
+                items(r.artists) { a -> ArtistRow(vm, a) }
                 if (r.albums.isNotEmpty()) item { Section("Albums") }
-                items(r.albums) { a ->
-                    ListItem(
-                        headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text("${a.artists} · ${a.total} tracks", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(LjudIcons.Note, null) },
-                        modifier = Modifier.clickable { vm.open(Detail.OfAlbum(a)) },
-                    )
-                }
+                items(r.albums) { a -> AlbumRow(vm, a) }
                 if (r.playlists.isNotEmpty()) item { Section("Playlists") }
                 items(r.playlists) { p ->
                     ListItem(
@@ -280,30 +284,119 @@ private fun TrackList(vm: MainViewModel, tracks: List<Track>, loading: Boolean, 
     }
 }
 
+/**
+ * A row that runs [onClick] on tap and shows a menu ([entries]) on long press.
+ * The menu entries and their order come from MainViewModel.menuFor.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WithMenu(
+    title: String,
+    entries: () -> List<MenuEntry>,
+    onClick: () -> Unit,
+    content: @Composable (Modifier) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    Box {
+        content(
+            Modifier.combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    open = true
+                },
+            ),
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.widthIn(max = 320.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            HorizontalDivider()
+            entries().forEach { e ->
+                DropdownMenuItem(
+                    text = { Text(e.label, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    onClick = {
+                        open = false
+                        e.run()
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun TrackRow(vm: MainViewModel, t: Track, onClick: () -> Unit) {
     val playing = vm.playback?.track?.uri == t.uri
     val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-    ListItem(
-        headlineContent = {
-            Text(
-                t.name,
-                color = color,
-                fontWeight = if (playing) FontWeight.Bold else null,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        supportingContent = {
-            Text(
-                listOf(t.artists, t.album).filter { it.isNotEmpty() }.joinToString(" · "),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        trailingContent = { Text(fmt(t.durationMs), style = MaterialTheme.typography.labelMedium) },
-        modifier = Modifier.clickable(onClick = onClick),
-    )
+    WithMenu(t.name, { vm.menuFor(t) }, onClick) { mod ->
+        ListItem(
+            headlineContent = {
+                Text(
+                    t.name,
+                    color = color,
+                    fontWeight = if (playing) FontWeight.Bold else null,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Text(
+                    listOf(t.artists, t.album).filter { it.isNotEmpty() }.joinToString(" · "),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            trailingContent = { Text(fmt(t.durationMs), style = MaterialTheme.typography.labelMedium) },
+            modifier = mod,
+        )
+    }
+}
+
+@Composable
+private fun AlbumRow(vm: MainViewModel, a: Album) {
+    WithMenu(a.name, { vm.menuFor(a) }, { vm.open(Detail.OfAlbum(a)) }) { mod ->
+        ListItem(
+            headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            supportingContent = { Text("${a.artists} · ${a.total} tracks", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            leadingContent = { Icon(LjudIcons.Album, null) },
+            modifier = mod,
+        )
+    }
+}
+
+@Composable
+private fun ArtistRow(vm: MainViewModel, a: Artist) {
+    WithMenu(a.name, { vm.menuFor(a) }, { vm.open(Detail.OfArtist(a)) }) { mod ->
+        ListItem(
+            headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            supportingContent = { Text("Artist") },
+            leadingContent = { Icon(LjudIcons.Person, null) },
+            modifier = mod,
+        )
+    }
+}
+
+@Composable
+private fun ArtistScreen(vm: MainViewModel, d: Detail.OfArtist) {
+    val tracks = vm.tracks
+    val albums = vm.artistAlbums
+    when {
+        vm.tracksLoading -> Loading()
+        tracks.isEmpty() && albums.isEmpty() -> Text("Nothing found.", Modifier.padding(16.dp))
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (tracks.isNotEmpty()) item { Section("Popular") }
+            itemsIndexed(tracks) { i, t -> TrackRow(vm, t) { vm.playFrom(tracks, i, d) } }
+            if (albums.isNotEmpty()) item { Section("Albums & singles") }
+            items(albums) { a -> AlbumRow(vm, a) }
+        }
+    }
 }
 
 @Composable

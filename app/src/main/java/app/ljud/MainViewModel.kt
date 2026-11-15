@@ -29,7 +29,11 @@ sealed interface Detail {
     data object Liked : Detail
     data class OfPlaylist(val playlist: Playlist) : Detail
     data class OfAlbum(val album: Album) : Detail
+    data class OfArtist(val artist: Artist) : Detail
 }
+
+/** One entry in a long-press menu. */
+class MenuEntry(val label: String, val run: () -> Unit)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val auth = Auth(app)
@@ -46,6 +50,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var detail by mutableStateOf<Detail?>(null); private set
     var tracks by mutableStateOf(emptyList<Track>()); private set
     var tracksLoading by mutableStateOf(false); private set
+    /** Albums & singles on an artist page. */
+    var artistAlbums by mutableStateOf(emptyList<Album>()); private set
+    /** Screens to return to with Back. */
+    private val detailStack = ArrayDeque<Detail>()
 
     var query by mutableStateOf("")
     var results by mutableStateOf<SearchResults?>(null); private set
@@ -150,18 +158,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Open a list, remembering the current one for Back. */
     fun open(d: Detail) {
+        detail?.let { if (it != d) detailStack.addLast(it) }
+        load(d)
+    }
+
+    private fun load(d: Detail) {
         detail = d
         tracks = emptyList()
+        artistAlbums = emptyList()
         tracksLoading = true
         detailJob?.cancel()
         detailJob = launchSafe {
             try {
-                tracks = io {
-                    when (d) {
-                        Detail.Liked -> api.liked()
-                        is Detail.OfPlaylist -> api.playlistTracks(d.playlist.id)
-                        is Detail.OfAlbum -> api.albumTracks(d.album)
+                when (d) {
+                    Detail.Liked -> tracks = io { api.liked() }
+                    is Detail.OfPlaylist -> tracks = io { api.playlistTracks(d.playlist.id) }
+                    is Detail.OfAlbum -> tracks = io { api.albumTracks(d.album) }
+                    is Detail.OfArtist -> {
+                        val (t, a) = io { api.artistPage(d.artist) }
+                        tracks = t
+                        artistAlbums = a
                     }
                 }
             } finally {
@@ -172,8 +190,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun back() {
         detailJob?.cancel()
+        val previous = detailStack.removeLastOrNull()
+        if (previous != null) load(previous) else detail = null
+    }
+
+    /** Leave all lists (e.g. when switching tabs). */
+    fun closeDetails() {
+        detailJob?.cancel()
+        detailStack.clear()
         detail = null
     }
+
+    // ---------------------------------------------------------------- menus
+    // Keep the order in sync with the TUI (`menu_for` in tui/src/app.rs):
+    // "Play …" first for albums and artists, then the album, then the artist(s).
+
+    private fun goToAlbum(a: Album) = MenuEntry("Go to album “${a.name}”") { open(Detail.OfAlbum(a)) }
+    private fun goToArtist(a: Artist) = MenuEntry("Go to artist “${a.name}”") { open(Detail.OfArtist(a)) }
+
+    fun menuFor(t: Track): List<MenuEntry> =
+        listOfNotNull(t.albumRef?.let(::goToAlbum)) + t.artistRefs.map(::goToArtist)
+
+    fun menuFor(a: Album): List<MenuEntry> =
+        listOf(MenuEntry("Play album") { playContext(a.uri) }, goToAlbum(a)) + a.artistRefs.map(::goToArtist)
+
+    fun menuFor(a: Artist): List<MenuEntry> =
+        listOf(MenuEntry("Play artist") { playContext(a.uri) }, goToArtist(a))
+
+    private fun playContext(uri: String) = play(JSONObject().put("context_uri", uri))
 
     fun search() {
         val q = query.trim()

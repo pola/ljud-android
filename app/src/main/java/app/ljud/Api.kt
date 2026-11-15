@@ -14,12 +14,36 @@ class ApiException(val status: Int, message: String, val reason: String?) : IOEx
 }
 
 data class User(val id: String, val name: String)
-data class Track(val uri: String, val name: String, val artists: String, val album: String, val durationMs: Long, val pos: Int)
+data class Artist(val id: String, val uri: String, val name: String)
+data class Track(
+    val uri: String,
+    val name: String,
+    val artists: String,
+    val album: String,
+    val durationMs: Long,
+    val pos: Int,
+    /** The album the track is on (for "Go to album"). */
+    val albumRef: Album? = null,
+    /** The track's artists (for "Go to artist"). */
+    val artistRefs: List<Artist> = emptyList(),
+)
 data class Playlist(val id: String, val uri: String, val name: String, val ownerId: String, val ownerName: String, val total: Int)
-data class Album(val id: String, val uri: String, val name: String, val artists: String, val total: Int)
+data class Album(
+    val id: String,
+    val uri: String,
+    val name: String,
+    val artists: String,
+    val total: Int,
+    val artistRefs: List<Artist> = emptyList(),
+)
 data class Device(val id: String?, val name: String, val type: String, val isActive: Boolean, val volume: Int?)
 data class Playback(val device: Device?, val isPlaying: Boolean, val progressMs: Long, val track: Track?)
-data class SearchResults(val tracks: List<Track>, val albums: List<Album>, val playlists: List<Playlist>)
+data class SearchResults(
+    val tracks: List<Track>,
+    val artists: List<Artist>,
+    val albums: List<Album>,
+    val playlists: List<Playlist>,
+)
 
 private fun JSONObject.str(key: String): String = if (isNull(key)) "" else optString(key)
 private fun JSONObject.obj(key: String): JSONObject? = if (isNull(key)) null else optJSONObject(key)
@@ -28,16 +52,27 @@ private fun JSONArray?.objects(): List<JSONObject?> =
 
 private fun artists(a: JSONArray?) = a.objects().mapNotNull { it?.str("name") }.joinToString(", ")
 
-private fun parseTrack(o: JSONObject?, pos: Int, album: String? = null): Track? {
+/** Artists with a Spotify id (local files have none). */
+private fun parseArtists(a: JSONArray?) = a.objects().mapNotNull(::parseArtist)
+
+private fun parseArtist(o: JSONObject?): Artist? {
+    if (o == null) return null
+    return Artist(id = o.str("id").ifEmpty { return null }, uri = o.str("uri"), name = o.str("name"))
+}
+
+/** [album]: for album track listings, whose (simplified) track objects don't include it. */
+private fun parseTrack(o: JSONObject?, pos: Int, album: Album? = null): Track? {
     if (o == null) return null
     val uri = o.str("uri").ifEmpty { return null }
     return Track(
         uri = uri,
         name = o.str("name"),
         artists = o.optJSONArray("artists")?.let { artists(it) } ?: o.obj("show")?.str("name").orEmpty(),
-        album = album ?: o.obj("album")?.str("name").orEmpty(),
+        album = album?.name ?: o.obj("album")?.str("name").orEmpty(),
         durationMs = o.optLong("duration_ms"),
         pos = pos,
+        albumRef = album ?: parseAlbum(o.obj("album")),
+        artistRefs = parseArtists(o.optJSONArray("artists")),
     )
 }
 
@@ -62,6 +97,7 @@ private fun parseAlbum(o: JSONObject?): Album? {
         name = o.str("name"),
         artists = artists(o.optJSONArray("artists")),
         total = o.optInt("total_tracks"),
+        artistRefs = parseArtists(o.optJSONArray("artists")),
     )
 }
 
@@ -172,16 +208,48 @@ class Api(private val auth: Auth) {
 
     fun albumTracks(a: Album): List<Track> =
         paged("/albums/${a.id}/tracks", listOf("limit" to "50"), 2000)
-            .mapIndexedNotNull { i, it -> parseTrack(it, i, a.name) }
+            .mapIndexedNotNull { i, it -> parseTrack(it, i, a) }
 
     fun search(query: String): SearchResults {
         // Development-mode apps get at most 10 results per type.
-        val o = get("/search", listOf("q" to query, "type" to "track,album,playlist", "limit" to "10"))
+        val o = get("/search", listOf("q" to query, "type" to "track,album,playlist,artist", "limit" to "10"))
         return SearchResults(
             tracks = o.obj("tracks")?.optJSONArray("items").objects().mapIndexedNotNull { i, t -> parseTrack(t, i) },
+            artists = o.obj("artists")?.optJSONArray("items").objects().mapNotNull(::parseArtist),
             albums = o.obj("albums")?.optJSONArray("items").objects().mapNotNull(::parseAlbum),
             playlists = o.obj("playlists")?.optJSONArray("items").objects().mapNotNull(::parsePlaylist),
         )
+    }
+
+    /**
+     * An artist page: popular tracks and albums & singles.
+     *
+     * Spotify blocks the artist top-tracks endpoint for development-mode apps,
+     * so "popular" comes from an `artist:` track search (ranked by popularity).
+     * That search returns ~5 hits per page, but pages at offsets 0, 10, 20 are
+     * distinct; hits by other artists are filtered out. Same logic as the TUI.
+     */
+    fun artistPage(artist: Artist): Pair<List<Track>, List<Album>> {
+        val tracks = mutableListOf<Track>()
+        for (offset in listOf("0", "10", "20")) {
+            val page = get(
+                "/search",
+                listOf(
+                    "q" to "artist:\"${artist.name.replace("\"", "")}\"",
+                    "type" to "track",
+                    "limit" to "10",
+                    "offset" to offset,
+                ),
+            ).obj("tracks")?.optJSONArray("items").objects()
+            page.mapNotNull { parseTrack(it, 0) }
+                .filter { t -> t.artistRefs.any { it.id == artist.id } && tracks.none { it.uri == t.uri } }
+                .forEach { tracks += it }
+            if (tracks.size >= 10 || page.isEmpty()) break
+        }
+        // Development-mode apps get at most 10 items per page here.
+        val albums = paged("/artists/${artist.id}/albums", listOf("include_groups" to "album,single", "limit" to "10"), 200)
+            .mapNotNull(::parseAlbum)
+        return tracks.take(10).mapIndexed { i, t -> t.copy(pos = i) } to albums
     }
 
     fun playback(): Playback? {
