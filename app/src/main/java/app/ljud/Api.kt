@@ -35,6 +35,8 @@ data class Album(
     val artists: String,
     val total: Int,
     val artistRefs: List<Artist> = emptyList(),
+    /** Release year, from the album's `release_date` (already in every album object). */
+    val year: String? = null,
 )
 data class Device(val id: String?, val name: String, val type: String, val isActive: Boolean, val volume: Int?)
 data class Playback(val device: Device?, val isPlaying: Boolean, val progressMs: Long, val track: Track?)
@@ -98,6 +100,7 @@ private fun parseAlbum(o: JSONObject?): Album? {
         artists = artists(o.optJSONArray("artists")),
         total = o.optInt("total_tracks"),
         artistRefs = parseArtists(o.optJSONArray("artists")),
+        year = o.str("release_date").take(4).takeIf { y -> y.length == 4 && y.all(Char::isDigit) && y != "0000" },
     )
 }
 

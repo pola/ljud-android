@@ -137,7 +137,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
     val title = when {
         detail is Detail.Liked -> "Liked songs"
         detail is Detail.OfPlaylist -> detail.playlist.name
-        detail is Detail.OfAlbum -> detail.album.name
+        detail is Detail.OfAlbum -> detail.album.run { if (year != null) "$name ($year)" else name }
         detail is Detail.OfArtist -> detail.artist.name
         detail is Detail.Queue -> "Queue"
         vm.tab == Tab.Search -> "Search"
@@ -368,7 +368,13 @@ private fun AlbumRow(vm: MainViewModel, a: Album) {
     WithMenu(a.name, { vm.menuFor(a) }, { vm.open(Detail.OfAlbum(a)) }) { mod ->
         ListItem(
             headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            supportingContent = { Text("${a.artists} · ${a.total} tracks", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            supportingContent = {
+                Text(
+                    listOfNotNull(a.artists, a.year, "${a.total} tracks").joinToString(" · "),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
             leadingContent = { Icon(LjudIcons.Album, null) },
             modifier = mod,
         )
