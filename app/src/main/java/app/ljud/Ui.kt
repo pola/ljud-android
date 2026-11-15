@@ -6,6 +6,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -212,7 +215,7 @@ private fun LibraryScreen(vm: MainViewModel) {
             ListItem(
                 headlineContent = { Text(p.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = { Text("${p.total} tracks$owner") },
-                leadingContent = { Icon(LjudIcons.Library, null) },
+                leadingContent = { Cover(p.images.pick(64), 48.dp, placeholder = LjudIcons.Library) },
                 modifier = Modifier.clickable { vm.open(Detail.OfPlaylist(p)) },
             )
         }
@@ -250,7 +253,7 @@ private fun SearchScreen(vm: MainViewModel) {
                     ListItem(
                         headlineContent = { Text(p.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         supportingContent = { Text("by ${p.ownerName} · ${p.total} tracks", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(LjudIcons.Library, null) },
+                        leadingContent = { Cover(p.images.pick(64), 48.dp, placeholder = LjudIcons.Library) },
                         modifier = Modifier.clickable { vm.open(Detail.OfPlaylist(p)) },
                     )
                 }
@@ -282,8 +285,45 @@ private fun TrackList(vm: MainViewModel, tracks: List<Track>, loading: Boolean, 
         loading -> Loading()
         tracks.isEmpty() -> Text("No tracks.", Modifier.padding(16.dp))
         else -> LazyColumn(Modifier.fillMaxSize()) {
-            itemsIndexed(tracks) { i, t -> TrackRow(vm, t) { vm.playFrom(tracks, i, context) } }
+            when (context) {
+                is Detail.OfAlbum -> item {
+                    val a = context.album
+                    DetailHeader(a.images.pick(300), listOfNotNull(a.artists, a.year).joinToString(" · "))
+                }
+                is Detail.OfPlaylist -> item {
+                    val p = context.playlist
+                    DetailHeader(p.images.pick(300), "${p.ownerName} · ${p.total} tracks", LjudIcons.Library)
+                }
+                else -> {}
+            }
+            // On an album page every song has the same cover; skip it there.
+            val covers = context !is Detail.OfAlbum
+            itemsIndexed(tracks) { i, t -> TrackRow(vm, t, covers) { vm.playFrom(tracks, i, context) } }
         }
+    }
+}
+
+/** Large cover and a subtitle at the top of an album/playlist/artist page. */
+@Composable
+private fun DetailHeader(
+    imageUrl: String?,
+    subtitle: String,
+    placeholder: ImageVector = LjudIcons.Album,
+    shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Cover(imageUrl, 200.dp, shape = shape, placeholder = placeholder)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
     }
 }
 
@@ -336,7 +376,7 @@ private fun WithMenu(
 }
 
 @Composable
-private fun TrackRow(vm: MainViewModel, t: Track, onClick: (() -> Unit)?) {
+private fun TrackRow(vm: MainViewModel, t: Track, showCover: Boolean = true, onClick: (() -> Unit)?) {
     val playing = vm.playback?.track?.uri == t.uri
     val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     WithMenu(t.name, { vm.menuFor(t) }, onClick) { mod ->
@@ -357,6 +397,11 @@ private fun TrackRow(vm: MainViewModel, t: Track, onClick: (() -> Unit)?) {
                     overflow = TextOverflow.Ellipsis,
                 )
             },
+            leadingContent = if (showCover) {
+                { Cover(t.albumRef?.images?.pick(64), 40.dp) }
+            } else {
+                null
+            },
             trailingContent = { Text(fmt(t.durationMs), style = MaterialTheme.typography.labelMedium) },
             modifier = mod,
         )
@@ -375,7 +420,7 @@ private fun AlbumRow(vm: MainViewModel, a: Album) {
                     overflow = TextOverflow.Ellipsis,
                 )
             },
-            leadingContent = { Icon(LjudIcons.Album, null) },
+            leadingContent = { Cover(a.images.pick(64), 48.dp, placeholder = LjudIcons.Album) },
             modifier = mod,
         )
     }
@@ -387,7 +432,7 @@ private fun ArtistRow(vm: MainViewModel, a: Artist) {
         ListItem(
             headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             supportingContent = { Text("Artist") },
-            leadingContent = { Icon(LjudIcons.Person, null) },
+            leadingContent = { Cover(a.images.pick(64), 48.dp, shape = CircleShape, placeholder = LjudIcons.Person) },
             modifier = mod,
         )
     }
@@ -404,10 +449,10 @@ private fun QueueScreen(vm: MainViewModel) {
         else -> LazyColumn(Modifier.fillMaxSize()) {
             if (current != null) {
                 item { Section("Now playing") }
-                item { TrackRow(vm, current, null) }
+                item { TrackRow(vm, current, onClick = null) }
             }
             if (next.isNotEmpty()) item { Section("Next up") }
-            items(next) { t -> TrackRow(vm, t, null) }
+            items(next) { t -> TrackRow(vm, t, onClick = null) }
         }
     }
 }
@@ -420,6 +465,9 @@ private fun ArtistScreen(vm: MainViewModel, d: Detail.OfArtist) {
         vm.tracksLoading -> Loading()
         tracks.isEmpty() && albums.isEmpty() -> Text("Nothing found.", Modifier.padding(16.dp))
         else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (d.artist.images.isNotEmpty()) {
+                item { DetailHeader(d.artist.images.pick(300), "Artist", LjudIcons.Person, CircleShape) }
+            }
             if (tracks.isNotEmpty()) item { Section("Popular") }
             itemsIndexed(tracks) { i, t -> TrackRow(vm, t) { vm.playFrom(tracks, i, d) } }
             if (albums.isNotEmpty()) item { Section("Albums & singles") }
@@ -449,9 +497,11 @@ private fun NowPlaying(vm: MainViewModel) {
                 drawStopIndicator = {},
             )
             Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Cover(p.track?.albumRef?.images?.pick(64), 44.dp)
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f).clickable { vm.openDevices() }) {
                     Text(
                         p.track?.name ?: "—",

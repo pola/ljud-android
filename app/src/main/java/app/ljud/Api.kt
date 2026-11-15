@@ -14,7 +14,13 @@ class ApiException(val status: Int, message: String, val reason: String?) : IOEx
 }
 
 data class User(val id: String, val name: String)
-data class Artist(val id: String, val uri: String, val name: String)
+/** A cover image; Spotify usually offers 640, 300 and 64 px versions. */
+data class Image(val url: String, val width: Int)
+
+/** The smallest image at least [px] wide (or the largest there is). */
+fun List<Image>.pick(px: Int): String? = firstOrNull { it.width >= px }?.url ?: lastOrNull()?.url
+
+data class Artist(val id: String, val uri: String, val name: String, val images: List<Image> = emptyList())
 data class Track(
     val uri: String,
     val name: String,
@@ -27,7 +33,15 @@ data class Track(
     /** The track's artists (for "Go to artist"). */
     val artistRefs: List<Artist> = emptyList(),
 )
-data class Playlist(val id: String, val uri: String, val name: String, val ownerId: String, val ownerName: String, val total: Int)
+data class Playlist(
+    val id: String,
+    val uri: String,
+    val name: String,
+    val ownerId: String,
+    val ownerName: String,
+    val total: Int,
+    val images: List<Image> = emptyList(),
+)
 data class Album(
     val id: String,
     val uri: String,
@@ -37,6 +51,7 @@ data class Album(
     val artistRefs: List<Artist> = emptyList(),
     /** Release year, from the album's `release_date` (already in every album object). */
     val year: String? = null,
+    val images: List<Image> = emptyList(),
 )
 data class Device(val id: String?, val name: String, val type: String, val isActive: Boolean, val volume: Int?)
 data class Playback(val device: Device?, val isPlaying: Boolean, val progressMs: Long, val track: Track?)
@@ -52,6 +67,13 @@ private fun JSONObject.obj(key: String): JSONObject? = if (isNull(key)) null els
 private fun JSONArray?.objects(): List<JSONObject?> =
     if (this == null) emptyList() else (0 until length()).map { if (isNull(it)) null else optJSONObject(it) }
 
+/** Images sorted by width, smallest first (unknown width counts as large). */
+private fun parseImages(a: JSONArray?): List<Image> =
+    a.objects().mapNotNull { o ->
+        val url = o?.str("url")?.ifEmpty { null } ?: return@mapNotNull null
+        Image(url, if (o.isNull("width")) 640 else o.optInt("width", 640))
+    }.sortedBy { it.width }
+
 private fun artists(a: JSONArray?) = a.objects().mapNotNull { it?.str("name") }.joinToString(", ")
 
 /** Artists with a Spotify id (local files have none). */
@@ -59,7 +81,12 @@ private fun parseArtists(a: JSONArray?) = a.objects().mapNotNull(::parseArtist)
 
 private fun parseArtist(o: JSONObject?): Artist? {
     if (o == null) return null
-    return Artist(id = o.str("id").ifEmpty { return null }, uri = o.str("uri"), name = o.str("name"))
+    return Artist(
+        id = o.str("id").ifEmpty { return null },
+        uri = o.str("uri"),
+        name = o.str("name"),
+        images = parseImages(o.optJSONArray("images")),
+    )
 }
 
 /** [album]: for album track listings, whose (simplified) track objects don't include it. */
@@ -88,6 +115,7 @@ private fun parsePlaylist(o: JSONObject?): Playlist? {
         ownerId = owner?.str("id").orEmpty(),
         ownerName = owner?.str("display_name")?.ifEmpty { null } ?: owner?.str("id").orEmpty(),
         total = (o.obj("tracks") ?: o.obj("items"))?.optInt("total") ?: 0,
+        images = parseImages(o.optJSONArray("images")),
     )
 }
 
@@ -101,6 +129,7 @@ private fun parseAlbum(o: JSONObject?): Album? {
         total = o.optInt("total_tracks"),
         artistRefs = parseArtists(o.optJSONArray("artists")),
         year = o.str("release_date").take(4).takeIf { y -> y.length == 4 && y.all(Char::isDigit) && y != "0000" },
+        images = parseImages(o.optJSONArray("images")),
     )
 }
 
