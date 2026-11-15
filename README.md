@@ -4,6 +4,10 @@ A small native Android app (Kotlin + Jetpack Compose) for Spotify:
 
 - Browse Liked songs and playlists, search, tap to play
 - Now-playing bar with play/pause, next and previous
+- Long-press a song, album or artist for a menu: add to queue, go to the album or
+  artist(s), play (same entries and order as the TUI)
+- Artist pages (popular songs, albums & singles) and the queue (icon next to the
+  speaker icon; Spotify's API can add to it but not remove or reorder)
 - Spotify Connect speakers with custom names and a volume slider
 - **Phone speaker:** a built-in player (librespot, in Rust) makes the phone itself a
   Spotify Connect speaker. No official Spotify app needed. It runs as a foreground

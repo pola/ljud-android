@@ -139,6 +139,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
         detail is Detail.OfPlaylist -> detail.playlist.name
         detail is Detail.OfAlbum -> detail.album.name
         detail is Detail.OfArtist -> detail.artist.name
+        detail is Detail.Queue -> "Queue"
         vm.tab == Tab.Search -> "Search"
         else -> vm.user?.name?.let { "ljud · $it" } ?: "ljud"
     }
@@ -153,6 +154,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { vm.open(Detail.Queue) }) { Icon(LjudIcons.Queue, "Queue") }
                     IconButton(onClick = vm::openDevices) { Icon(LjudIcons.Speaker, "Speakers") }
                 },
             )
@@ -181,6 +183,7 @@ private fun MainScreen(vm: MainViewModel, onPhoneSpeaker: (Boolean) -> Unit) {
         Box(Modifier.fillMaxSize().padding(pad)) {
             when {
                 detail is Detail.OfArtist -> ArtistScreen(vm, detail)
+                detail is Detail.Queue -> QueueScreen(vm)
                 detail != null -> TrackList(vm, vm.tracks, vm.tracksLoading, detail)
                 vm.tab == Tab.Library -> LibraryScreen(vm)
                 else -> SearchScreen(vm)
@@ -286,6 +289,7 @@ private fun TrackList(vm: MainViewModel, tracks: List<Track>, loading: Boolean, 
 
 /**
  * A row that runs [onClick] on tap and shows a menu ([entries]) on long press.
+ * With [onClick] null, a tap opens the menu too.
  * The menu entries and their order come from MainViewModel.menuFor.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -293,7 +297,7 @@ private fun TrackList(vm: MainViewModel, tracks: List<Track>, loading: Boolean, 
 private fun WithMenu(
     title: String,
     entries: () -> List<MenuEntry>,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     content: @Composable (Modifier) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -301,7 +305,7 @@ private fun WithMenu(
     Box {
         content(
             Modifier.combinedClickable(
-                onClick = onClick,
+                onClick = onClick ?: { open = true },
                 onLongClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     open = true
@@ -332,7 +336,7 @@ private fun WithMenu(
 }
 
 @Composable
-private fun TrackRow(vm: MainViewModel, t: Track, onClick: () -> Unit) {
+private fun TrackRow(vm: MainViewModel, t: Track, onClick: (() -> Unit)?) {
     val playing = vm.playback?.track?.uri == t.uri
     val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     WithMenu(t.name, { vm.menuFor(t) }, onClick) { mod ->
@@ -380,6 +384,25 @@ private fun ArtistRow(vm: MainViewModel, a: Artist) {
             leadingContent = { Icon(LjudIcons.Person, null) },
             modifier = mod,
         )
+    }
+}
+
+/** The queue. Spotify's API can't jump to a queued song, so a tap opens the menu. */
+@Composable
+private fun QueueScreen(vm: MainViewModel) {
+    val current = vm.queueCurrent
+    val next = vm.tracks
+    when {
+        vm.tracksLoading -> Loading()
+        current == null && next.isEmpty() -> Text("Nothing is playing.", Modifier.padding(16.dp))
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (current != null) {
+                item { Section("Now playing") }
+                item { TrackRow(vm, current, null) }
+            }
+            if (next.isNotEmpty()) item { Section("Next up") }
+            items(next) { t -> TrackRow(vm, t, null) }
+        }
     }
 }
 

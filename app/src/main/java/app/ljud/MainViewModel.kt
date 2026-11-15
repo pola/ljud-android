@@ -30,6 +30,7 @@ sealed interface Detail {
     data class OfPlaylist(val playlist: Playlist) : Detail
     data class OfAlbum(val album: Album) : Detail
     data class OfArtist(val artist: Artist) : Detail
+    data object Queue : Detail
 }
 
 /** One entry in a long-press menu. */
@@ -52,6 +53,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var tracksLoading by mutableStateOf(false); private set
     /** Albums & singles on an artist page. */
     var artistAlbums by mutableStateOf(emptyList<Album>()); private set
+    /** "Now playing" on the queue screen (its "Next up" list is [tracks]). */
+    var queueCurrent by mutableStateOf<Track?>(null); private set
     /** Screens to return to with Back. */
     private val detailStack = ArrayDeque<Detail>()
 
@@ -176,6 +179,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     Detail.Liked -> tracks = io { api.liked() }
                     is Detail.OfPlaylist -> tracks = io { api.playlistTracks(d.playlist.id) }
                     is Detail.OfAlbum -> tracks = io { api.albumTracks(d.album) }
+                    Detail.Queue -> {
+                        val (current, next) = io { api.queue() }
+                        queueCurrent = current
+                        tracks = next
+                    }
                     is Detail.OfArtist -> {
                         val (t, a) = io { api.artistPage(d.artist) }
                         tracks = t
@@ -203,21 +211,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- menus
     // Keep the order in sync with the TUI (`menu_for` in tui/src/app.rs):
-    // "Play …" first for albums and artists, then the album, then the artist(s).
+    // "Play …" first for albums and artists, then "Add … to queue", then the
+    // album, then the artist(s).
 
     private fun goToAlbum(a: Album) = MenuEntry("Go to album “${a.name}”") { open(Detail.OfAlbum(a)) }
     private fun goToArtist(a: Artist) = MenuEntry("Go to artist “${a.name}”") { open(Detail.OfArtist(a)) }
 
     fun menuFor(t: Track): List<MenuEntry> =
-        listOfNotNull(t.albumRef?.let(::goToAlbum)) + t.artistRefs.map(::goToArtist)
+        listOf(MenuEntry("Add to queue") { addToQueue(t) }) +
+            listOfNotNull(t.albumRef?.let(::goToAlbum)) + t.artistRefs.map(::goToArtist)
 
     fun menuFor(a: Album): List<MenuEntry> =
-        listOf(MenuEntry("Play album") { playContext(a.uri) }, goToAlbum(a)) + a.artistRefs.map(::goToArtist)
+        listOf(
+            MenuEntry("Play album") { playContext(a.uri) },
+            MenuEntry("Add album to queue") { addAlbumToQueue(a) },
+            goToAlbum(a),
+        ) + a.artistRefs.map(::goToArtist)
 
     fun menuFor(a: Artist): List<MenuEntry> =
         listOf(MenuEntry("Play artist") { playContext(a.uri) }, goToArtist(a))
 
     private fun playContext(uri: String) = play(JSONObject().put("context_uri", uri))
+
+    private fun addToQueue(t: Track) = queueAdd { api.addToQueue(t.uri); "Added “${t.name}” to the queue" }
+
+    private fun addAlbumToQueue(a: Album) = queueAdd {
+        val songs = api.albumTracks(a)
+        songs.forEach { api.addToQueue(it.uri) }
+        "Added ${songs.size} songs from “${a.name}” to the queue"
+    }
+
+    /** Run a queue addition (blocking [block] returns the message to show). */
+    private fun queueAdd(block: () -> String) = viewModelScope.launch {
+        try {
+            message = io(block)
+            if (detail == Detail.Queue) load(Detail.Queue)
+        } catch (e: ApiException) {
+            if (e.isNoDevice) message = "Nothing is playing: start playback on a speaker first, then queue songs."
+            else handle(e)
+        } catch (e: Exception) {
+            handle(e)
+        }
+    }
 
     fun search() {
         val q = query.trim()
@@ -245,7 +280,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshPlayback() {
         try {
             val p = io { api.playback() }
+            val changed = playback?.track?.uri != null && playback?.track?.uri != p?.track?.uri
             playback = p
+            if (changed && detail == Detail.Queue) load(Detail.Queue)
             playbackAt = SystemClock.elapsedRealtime()
             p?.device?.id?.let { prefs.edit().putString("last_device", it).apply() }
         } catch (e: Exception) {

@@ -262,6 +262,19 @@ class Api(private val auth: Auth) {
         )
     }
 
+    /**
+     * The playback queue: the current track and what plays next. Spotify mixes
+     * manually queued songs with upcoming context songs, without saying which.
+     */
+    fun queue(): Pair<Track?, List<Track>> {
+        val o = get("/me/player/queue")
+        val next = o.optJSONArray("queue").objects().mapIndexedNotNull { i, t -> parseTrack(t, i) }
+        return parseTrack(o.obj("currently_playing"), 0) to next
+    }
+
+    /** Add a song to the end of the user's queue (on the active device). */
+    fun addToQueue(uri: String) { call("POST", "/me/player/queue", listOf("uri" to uri)) }
+
     fun devices(): List<Device> =
         get("/me/player/devices").optJSONArray("devices").objects().mapNotNull { it?.let(::parseDevice) }
 
